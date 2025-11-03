@@ -1,25 +1,67 @@
+const delay = (ms)=>new Promise(r=>setTimeout(r,ms));
+
+const findSend = (root)=> root.querySelector(`
+  [data-testid="send"],
+  [data-testid="compose-btn-send"],
+  [data-icon*="send"],
+  span[data-icon*="send"]
+`);
+
+const waitUntil = async (pred, timeout=3000, step=50)=>{
+  const t0 = performance.now();
+  while(!pred()){
+    if(performance.now() - t0 > timeout) return false;
+    await delay(step);
+  }
+  return true;
+};
+
+async function clearComposer(input){
+  input.focus();
+  document.execCommand('selectAll', false, null);
+  document.execCommand('delete', false, null);
+  input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  await delay(0); // siguiente frame
+}
+
+async function setComposer(input, text){
+  input.focus();
+  document.execCommand('insertText', false, text);
+  input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  await delay(0);
+}
+
 async function enviarScript(scriptText){
-	const lines = scriptText.split(/[\n\t]+/).map(line => line.trim()).filter(line => line);
-	main = document.querySelector("#main"),
-	textarea = main.querySelector(`div[contenteditable="true"]`)
-	
-	if(!textarea) throw new Error("Não há uma conversa aberta")
-	
-	for(const line of lines){
-		console.log(line)
-	
-		textarea.focus();
-		document.execCommand('insertText', false, line);
-		textarea.dispatchEvent(new Event('change', {bubbles: true}));
-	
-		setTimeout(() => {
-			(main.querySelector(`[data-testid="send"]`) || main.querySelector(`[data-icon="send"]`)).click();
-		}, 100);
-		
-		if(lines.indexOf(line) !== lines.length - 1) await new Promise(resolve => setTimeout(resolve, 250));
-	}
-	
-	return lines.length;
+  const main = document.querySelector('#main');
+  if(!main) throw new Error('Main no encontrado');
+
+  const input = main.querySelector('footer div[contenteditable="true"][role="textbox"]');
+  if(!input) throw new Error('Textbox no encontrado');
+
+  const lines = scriptText.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+
+  for(const [i,line] of lines.entries()){
+    // Asegura composer limpio antes de escribir
+    await clearComposer(input);
+
+    // Escribe y espera a que haya texto y el botón esté presente
+    await setComposer(input, line);
+    const okReady = await waitUntil(()=>{
+      const btn = findSend(main);
+      return btn && input.textContent.trim().length > 0 && btn.getAttribute('aria-disabled') !== 'true';
+    }, 3000);
+    if(!okReady) throw new Error('Botón enviar no disponible/habilitado');
+
+    // Click seguro
+    findSend(main).click();
+
+    // Espera a que el mensaje salga y el composer quede vacío
+    await waitUntil(()=> input.textContent.trim().length === 0, 3000);
+
+    // Pequeño respiro entre envíos
+    if(i !== lines.length-1) await delay(200);
+  }
+  return lines.length;
 }
 
 enviarScript(`
